@@ -44,7 +44,7 @@ class BPETokenizer:
             tally = self._tally_pairs(stream)
             if not tally:
                 break
-          """now here we pick highest frequesncy and break ties by smallest first id first and tgen smallest second id """
+            """now here we pick highest frequesncy and break ties by smallest first id first and tgen smallest second id"""
             chosen_pair= min(tally.keys(), key=lambda p: (-tally[p], p[0], p[1]))
             merged_id= 256 + step
             stream= self._apply_merge(stream, chosen_pair, merged_id)
