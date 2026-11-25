@@ -80,3 +80,9 @@ class bpetok:
         tok=cls()
         tok.merges=[(int(a),int(b)) for a,b in data["merges"]]
         return tok
+
+
+def chimnaz(text,vocab_size=300):
+    t=bpetok()
+    t.train(text,vocab_size)
+    return t
