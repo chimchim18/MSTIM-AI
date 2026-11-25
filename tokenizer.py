@@ -10,7 +10,6 @@ class bpetok:
 
     @staticmethod
     def _counts(seq):
-        # count adjacent pairs in seq
         cnt={}
         for i in range(len(seq)-1):
             p=(seq[i],seq[i+1])
@@ -19,7 +18,6 @@ class bpetok:
 
     @staticmethod
     def _merge(seq,pair,tid):
-        # replace non-overlapping pair left-to-right with tid
         a,b=pair
         out=[]
         i=0
@@ -34,7 +32,6 @@ class bpetok:
         return out
 
     def train(self,text,vocab_size):
-        # learn bpe merges on utf-8 bytes
         self.merges=[]
         ids=list(text.encode("utf-8"))
         steps=max(0,vocab_size-256)
@@ -44,7 +41,6 @@ class bpetok:
             cnt=self._counts(ids)
             if not cnt:
                 break
-            # highest count first, tie-break by smaller ids
             best=min(cnt,key=lambda p:(-cnt[p],p[0],p[1]))
             ids=self._merge(ids,best,256+k)
             self.merges.append(best)
