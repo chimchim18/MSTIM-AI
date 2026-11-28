@@ -130,6 +130,7 @@ class model_trainer:
             n_head=int(self.cfg.get("n_head",4)),
             n_embd=int(self.cfg.get("n_embd",128)),
             dropout=float(self.cfg.get("dropout",0.1)),
+            ablation=self.ablation,
         )
         model=GPT(mcfg).to(self.device)
         opt=self._build_optimizer(model)
