@@ -12,6 +12,7 @@ class GPTConfig:
     n_head:int=4
     n_embd:int=128
     dropout:float=0.1
+    ablation:str="none"
 
     def __post_init__(self):
         if self.n_embd%self.n_head!=0:
@@ -68,12 +69,22 @@ class ffn(nn.Module):
 class tblock(nn.Module):
     def __init__(self,cfg):
         super().__init__()
+        self.post_ln=(cfg.ablation=="post_ln")
         self.ln1=nn.LayerNorm(cfg.n_embd)
         self.attn=mhca(cfg)
         self.ln2=nn.LayerNorm(cfg.n_embd)
         self.mlp=ffn(cfg)
 
     def forward(self,x,past_kv=None,use_cache=False):
+        if self.post_ln:
+            if use_cache:
+                h,next_kv=self.attn(x,past_kv=past_kv,use_cache=True)
+                x=self.ln1(x+h)
+                x=self.ln2(x+self.mlp(x))
+                return x,next_kv
+            x=self.ln1(x+self.attn(x))
+            x=self.ln2(x+self.mlp(x))
+            return x
         if use_cache:
             h,next_kv=self.attn(self.ln1(x),past_kv=past_kv,use_cache=True)
             x=x+h
@@ -114,8 +125,11 @@ class GPT(nn.Module):
         past_len=past_kv[0][0].size(2) if past_kv is not None else 0
         if past_len+seq>self.cfg.block_size:
             raise ValueError("seq longer than block_size")
-        pos=torch.arange(past_len,past_len+seq,device=idx.device,dtype=torch.long)
-        x=self.drop(self.tok_emb(idx)+self.pos_emb(pos))
+        if self.cfg.ablation=="no_pos":
+            x=self.drop(self.tok_emb(idx))
+        else:
+            pos=torch.arange(past_len,past_len+seq,device=idx.device,dtype=torch.long)
+            x=self.drop(self.tok_emb(idx)+self.pos_emb(pos))
         next_kvs=[] if use_cache else None
         for i,blk in enumerate(self.blocks):
             layer_past=past_kv[i] if past_kv is not None else None
