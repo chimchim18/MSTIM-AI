@@ -1,33 +1,60 @@
 import torch
 import torch.nn.functional as F
 
-def _filter_logits(logits,top_k,top_p):
-    out=logits.clone()
-    vocab=out.size(-1)
-    if top_k is not None:
-        k=max(1,min(int(top_k),vocab))
-        thresh=torch.topk(out,k).values[-1]
-        out=out.masked_fill(out<thresh,float("-inf"))
-    if top_p is not None and top_p<1.0:
-        sorted_vals,sorted_idx=torch.sort(out,descending=True)
-        probs=F.softmax(sorted_vals,dim=-1)
-        cum_probs=torch.cumsum(probs,dim=-1)
-        drop_mask=cum_probs>top_p
-        drop_mask[1:]=drop_mask[:-1].clone()
-        drop_mask[0]=False
-        sorted_vals=sorted_vals.masked_fill(drop_mask,float("-inf"))
-        out=torch.full_like(out,float("-inf"))
-        out.scatter_(0,sorted_idx,sorted_vals)
-    return out
+class token_sampler:
+    def __init__(self,temperature,top_k,top_p,rng):
+        self.temp=float(temperature)
+        self.top_k=top_k
+        self.top_p=top_p
+        self.rng=rng
 
-def _pick_next(logits,temperature,top_k,top_p,rng):
-    if temperature<=0.0:
-        return int(torch.argmax(logits).item())
-    scaled=logits/float(temperature)
-    filtered=_filter_logits(scaled,top_k,top_p)
-    probs=F.softmax(filtered,dim=-1)
-    idx=torch.multinomial(probs,num_samples=1,generator=rng)
-    return int(idx.item())
+    def apply_truncation(self,row):
+        work=row.clone()
+        vsize=work.size(-1)
+        if self.top_k is not None:
+            k_cap=max(1,min(int(self.top_k),vsize))
+            k_min=torch.topk(work,k_cap).values[-1]
+            work=torch.where(work<k_min,torch.full_like(work,float("-inf")),work)
+        if self.top_p is not None and self.top_p<1.0:
+            desc_vals,desc_idx=torch.sort(work,descending=True)
+            desc_probs=F.softmax(desc_vals,dim=-1)
+            running=torch.cumsum(desc_probs,dim=-1)
+            over=torch.nonzero(running>=self.top_p,as_tuple=False)
+            keep_n=int(over[0].item())+1 if over.numel()>0 else 1
+            p_min=desc_vals[keep_n-1]
+            work=torch.where(work<p_min,torch.full_like(work,float("-inf")),work)
+        return work
+
+    def draw_token(self,last_logits):
+        if self.temp<=0.0:
+            return int(torch.argmax(last_logits).item())
+        scaled=last_logits/self.temp
+        pruned=self.apply_truncation(scaled)
+        dist=F.softmax(pruned,dim=-1)
+        picked=torch.multinomial(dist,num_samples=1,generator=self.rng)
+        return int(picked.item())
+
+    def decode_cached(self,model,seed_ids,steps,device):
+        out=list(seed_ids)
+        ctx=torch.tensor([out],dtype=torch.long,device=device)
+        logits,_,cache=model(ctx,use_cache=True)
+        tok=self.draw_token(logits[0,-1])
+        out.append(tok)
+        for _ in range(steps-1):
+            cur=torch.tensor([[tok]],dtype=torch.long,device=device)
+            logits,_,cache=model(cur,past_kv=cache,use_cache=True)
+            tok=self.draw_token(logits[0,-1])
+            out.append(tok)
+        return out
+
+    def decode_plain(self,model,seed_ids,steps,device):
+        out=list(seed_ids)
+        for _ in range(steps):
+            ctx=torch.tensor([out],dtype=torch.long,device=device)
+            logits,_=model(ctx)
+            tok=self.draw_token(logits[0,-1])
+            out.append(tok)
+        return out
 
 @torch.no_grad()
 def generate(
@@ -44,14 +71,13 @@ def generate(
         raise ValueError("prompt_ids cannot be empty")
     if max_new_tokens<0:
         raise ValueError("max_new_tokens must be non-negative")
-    total_target=len(prompt_ids)+max_new_tokens
-    if total_target>model.cfg.block_size:
+    if len(prompt_ids)+max_new_tokens>model.cfg.block_size:
         raise ValueError("total tokens exceed block_size")
     if max_new_tokens==0:
         return list(prompt_ids)
 
     device=next(model.parameters()).device
-    was_training=model.training
+    prev_mode=model.training
     model.eval()
 
     rng=None
@@ -59,26 +85,11 @@ def generate(
         rng=torch.Generator(device=device)
         rng.manual_seed(int(seed))
 
-    seq=list(prompt_ids)
+    sampler=token_sampler(temperature,top_k,top_p,rng)
     try:
         if use_cache:
-            inp=torch.tensor([seq],dtype=torch.long,device=device)
-            logits,_,past_kv=model(inp,use_cache=True)
-            nxt=_pick_next(logits[0,-1],temperature,top_k,top_p,rng)
-            seq.append(nxt)
-            for _ in range(max_new_tokens-1):
-                step_inp=torch.tensor([[nxt]],dtype=torch.long,device=device)
-                logits,_,past_kv=model(step_inp,past_kv=past_kv,use_cache=True)
-                nxt=_pick_next(logits[0,-1],temperature,top_k,top_p,rng)
-                seq.append(nxt)
-        else:
-            for _ in range(max_new_tokens):
-                inp=torch.tensor([seq],dtype=torch.long,device=device)
-                logits,_=model(inp)
-                nxt=_pick_next(logits[0,-1],temperature,top_k,top_p,rng)
-                seq.append(nxt)
+            return sampler.decode_cached(model,prompt_ids,max_new_tokens,device)
+        return sampler.decode_plain(model,prompt_ids,max_new_tokens,device)
     finally:
-        if was_training:
+        if prev_mode:
             model.train()
-
-    return seq
