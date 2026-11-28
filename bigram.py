@@ -3,16 +3,16 @@ import csv
 import math
 import os
 import time
-from train import CorpusStore, RUNS_HEADER
+from train import RUNS_HEADER, corpus_store
 
-class BigramBaseline:
+class bigram_baseline:
     def __init__(self,vocab_size):
         self.v=vocab_size
         self.trans=[0]*(vocab_size*vocab_size)
         self.totals=[0]*vocab_size
         self.ready=False
 
-    def fit(self,seq):
+    def fit_seq(self,seq):
         v=self.v
         self.trans=[0]*(v*v)
         self.totals=[0]*v
@@ -23,9 +23,9 @@ class BigramBaseline:
                 self.totals[a]+=cnt
         self.ready=True
 
-    def loss_nats(self,seq):
+    def seq_loss_nats(self,seq):
         if not self.ready:
-            raise RuntimeError("model not fitted")
+            raise RuntimeError("bigram model not fitted")
         if len(seq)<2:
             return 0.0
         v=self.v
@@ -38,19 +38,19 @@ class BigramBaseline:
                 steps+=1
         return nll/max(1,steps)
 
-    def num_params(self):
+    def param_count(self):
         return self.v*self.v
 
-def evaluate_baseline(vocab_size=1024):
+def run_bigram_eval(vocab_size=1024):
     t0=time.time()
-    tok,tr_tensor,va_tensor=CorpusStore().prepare(vocab_size)
+    tok,tr_tensor,va_tensor=corpus_store().prepare(vocab_size)
     tr_ids=tr_tensor.tolist()
     va_ids=va_tensor.tolist()
 
-    bg=BigramBaseline(tok.vocab_size)
-    bg.fit(tr_ids)
-    tr_nll=bg.loss_nats(tr_ids)
-    va_nll=bg.loss_nats(va_ids)
+    bg=bigram_baseline(tok.vocab_size)
+    bg.fit_seq(tr_ids)
+    tr_nll=bg.seq_loss_nats(tr_ids)
+    va_nll=bg.seq_loss_nats(va_ids)
     dt=max(1e-6,time.time()-t0)
 
     print(f"bigram validation loss: {va_nll:.6f} nats/token")
@@ -64,7 +64,7 @@ def evaluate_baseline(vocab_size=1024):
         "max_lr":0,
         "max_steps":0,
         "ablation":"add_one_bigram",
-        "params":bg.num_params(),
+        "params":bg.param_count(),
         "best_val_loss":f"{va_nll:.6f}",
         "final_train_loss":f"{tr_nll:.6f}",
         "tokens_per_sec":f"{len(tr_ids)/dt:.2f}",
@@ -79,4 +79,4 @@ def evaluate_baseline(vocab_size=1024):
     return va_nll
 
 if __name__=="__main__":
-    evaluate_baseline()
+    run_bigram_eval()
