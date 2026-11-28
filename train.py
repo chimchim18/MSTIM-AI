@@ -15,7 +15,7 @@ RUNS_HEADER=[
     "ablation","params","best_val_loss","final_train_loss","tokens_per_sec","wall_time_min"
 ]
 
-class CorpusStore:
+class corpus_store:
     def __init__(self,raw_path="data/input.txt",tok_path="tokenizer.json",cache_dir="data/cache"):
         self.raw_path=raw_path
         self.tok_path=tok_path
@@ -55,7 +55,7 @@ class CorpusStore:
         torch.save(va_ids,va_file)
         return tok,tr_ids,va_ids
 
-class Trainer:
+class model_trainer:
     def __init__(self,cfg):
         self.cfg=cfg
         self.run_id=str(cfg.get("run_id","run"))
@@ -122,7 +122,7 @@ class Trainer:
         rng=torch.Generator()
         rng.manual_seed(self.seed)
 
-        tok,train_ids,val_ids=CorpusStore().prepare(int(self.cfg.get("vocab_size",1024)))
+        tok,train_ids,val_ids=corpus_store().prepare(int(self.cfg.get("vocab_size",1024)))
         mcfg=GPTConfig(
             vocab_size=tok.vocab_size,
             block_size=self.block_size,
@@ -195,13 +195,13 @@ class Trainer:
                 rw.writeheader()
             rw.writerow(summary)
 
-def main():
+def parse_args_and_run():
     parser=argparse.ArgumentParser()
     parser.add_argument("--config",required=True)
     args=parser.parse_args()
     with open(args.config,"r",encoding="utf-8") as f:
         cfg=json.load(f)
-    Trainer(cfg).execute()
+    model_trainer(cfg).execute()
 
 if __name__=="__main__":
-    main()
+    parse_args_and_run()
